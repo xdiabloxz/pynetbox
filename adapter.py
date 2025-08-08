@@ -1,3 +1,4 @@
+# Versão final, pronta para produção com Gunicorn
 import os
 import pynetbox
 from flask import Flask, Response, request
@@ -62,9 +63,6 @@ def get_devices_for_oxidized():
                         device.custom_fields.get('ssh_port')]):
                 continue
             
-            # --- CORREÇÃO FINAL E DEFINITIVA AQUI ---
-            # Voltamos ao método original de tratar o IP como texto e dividir pela '/'
-            # para remover a máscara. Esta é a forma correta para a sua versão.
             ip_address = device.primary_ip4.address.split('/')[0]
             port = int(device.custom_fields['ssh_port'])
             
@@ -82,5 +80,4 @@ def get_devices_for_oxidized():
 
     return Response('\n'.join(output_lines), mimetype='text/plain')
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+# A seção 'if __name__ == "__main__":' foi removida.
