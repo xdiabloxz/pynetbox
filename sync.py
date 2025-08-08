@@ -3,6 +3,7 @@ import pynetbox
 import psycopg2
 import time
 import schedule
+from datetime import datetime
 
 # --- CONFIGURAÇÕES (lidas do ambiente) ---
 NETBOX_URL = os.environ.get('NETBOX_URL')
@@ -11,9 +12,16 @@ DB_HOST = os.environ.get('DB_HOST')
 DB_NAME = os.environ.get('DB_NAME')
 DB_USER = os.environ.get('DB_USER')
 DB_PASS = os.environ.get('DB_PASS')
+# Nova variável de ambiente para o intervalo, com um padrão de 5 minutos
+SYNC_INTERVAL = int(os.environ.get('SYNC_INTERVAL', 5))
+
+# --- Função de Log com Data/Hora ---
+def log(message):
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"{timestamp} - {message}")
 
 def run_sync():
-    print("Iniciando a sincronização de dispositivos do NetBox para o PostgreSQL...")
+    log("INICIANDO ciclo de sincronização...")
     
     # 1. Conectar ao NetBox
     try:
@@ -25,9 +33,9 @@ def run_sync():
             nb.http_session = session
         
         devices_from_netbox = nb.dcim.devices.filter(status='active')
-        print(f"Encontrados {len(devices_from_netbox)} dispositivos ativos no NetBox.")
+        log(f"Encontrados {len(devices_from_netbox)} dispositivos ativos no NetBox.")
     except Exception as e:
-        print(f"ERRO: Falha ao conectar ou buscar dados do NetBox: {e}")
+        log(f"ERRO: Falha ao conectar ou buscar dados do NetBox: {e}")
         return
 
     # 2. Conectar ao PostgreSQL
@@ -40,7 +48,7 @@ def run_sync():
         )
         cur = conn.cursor()
     except Exception as e:
-        print(f"ERRO: Falha ao conectar com o PostgreSQL: {e}")
+        log(f"ERRO: Falha ao conectar com o PostgreSQL: {e}")
         return
 
     # 3. Criar a tabela se ela não existir
@@ -56,7 +64,7 @@ def run_sync():
         );
     """)
 
-    # 4. Sincronizar dados (apaga tudo e insere a lista fresca do NetBox)
+    # 4. Sincronizar dados
     try:
         device_list_to_insert = []
         for device in devices_from_netbox:
@@ -77,29 +85,28 @@ def run_sync():
                 device.custom_fields['oxidized_password']
             ))
 
-        # Executa a sincronização dentro de uma transação
         cur.execute("TRUNCATE TABLE devices RESTART IDENTITY;")
-        print(f"Tabela 'devices' limpa. Inserindo {len(device_list_to_insert)} novos registros...")
+        log(f"Tabela 'devices' limpa. Inserindo {len(device_list_to_insert)} novos registros...")
         
         insert_query = "INSERT INTO devices (name, ip, model, port, username, password) VALUES (%s, %s, %s, %s, %s, %s)"
         cur.executemany(insert_query, device_list_to_insert)
 
         conn.commit()
-        print("Sincronização concluída com sucesso!")
+        log("Sincronização CONCLUÍDA com sucesso!")
 
     except Exception as e:
-        print(f"ERRO: Falha durante a sincronização: {e}")
+        log(f"ERRO: Falha durante a sincronização: {e}")
         conn.rollback()
     finally:
         cur.close()
         conn.close()
 
 # --- Loop Principal ---
-# Roda a sincronização imediatamente ao iniciar, e depois a cada 5 minutos.
 if __name__ == '__main__':
-    run_sync()
-    schedule.every(5).minutes.do(run_sync)
-    print("Agendador iniciado. Próxima sincronização em 5 minutos.")
+    log(f"Serviço de Sincronização iniciado. O trabalho será executado a cada {SYNC_INTERVAL} minuto(s).")
+    run_sync() # Executa uma vez imediatamente
+    schedule.every(SYNC_INTERVAL).minutes.do(run_sync)
+    
     while True:
         schedule.run_pending()
         time.sleep(1)
