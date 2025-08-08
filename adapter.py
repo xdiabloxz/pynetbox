@@ -1,11 +1,11 @@
-# Versão final, pronta para produção com Gunicorn
 import os
 import pynetbox
 from flask import Flask, Response, request
-import ipaddress
+import ipaddress # Biblioteca padrão para manipulação de IPs
 
 app = Flask(__name__)
 
+# ... (todo o resto do código até a função get_devices_for_oxidized é igual) ...
 NETBOX_URL = os.environ.get('NETBOX_URL')
 NETBOX_TOKEN = os.environ.get('NETBOX_TOKEN')
 ALLOWED_IPS_STR = os.environ.get('ALLOWED_IPS') 
@@ -63,7 +63,14 @@ def get_devices_for_oxidized():
                         device.custom_fields.get('ssh_port')]):
                 continue
             
-            ip_address = device.primary_ip4.address.split('/')[0]
+            # --- CORREÇÃO FINAL E DEFINITIVA AQUI ---
+            # 1. Pega o endereço com a máscara (ex: "45.239.240.162/32")
+            ip_with_mask = device.primary_ip4.address
+            # 2. Usa a biblioteca 'ipaddress' para interpretar este texto
+            ip_object = ipaddress.ip_interface(ip_with_mask)
+            # 3. Extrai apenas o IP do objeto, garantindo que é o valor correto
+            ip_address = str(ip_object.ip)
+            
             port = int(device.custom_fields['ssh_port'])
             
             line = (
@@ -80,4 +87,6 @@ def get_devices_for_oxidized():
 
     return Response('\n'.join(output_lines), mimetype='text/plain')
 
-# A seção 'if __name__ == "__main__":' foi removida.
+# O Gunicorn irá iniciar a aplicação, então esta parte não é usada no contêiner
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
