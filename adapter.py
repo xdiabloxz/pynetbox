@@ -61,11 +61,12 @@ def get_devices_for_oxidized():
                         device.custom_fields.get('oxidized_password'),
                         device.custom_fields.get('ssh_port')]):
                 continue
-            port = int(device.custom_fields['ssh_port'])
             
             # --- CORREÇÃO FINAL E DEFINITIVA AQUI ---
-            # Usamos .ip para pegar o endereço IP puro, sem a máscara.
-            ip_address = device.primary_ip4.address.ip
+            # Voltamos ao método original de tratar o IP como texto e dividir pela '/'
+            # para remover a máscara. Esta é a forma correta para a sua versão.
+            ip_address = device.primary_ip4.address.split('/')[0]
+            port = int(device.custom_fields['ssh_port'])
             
             line = (
                 f"{ip_address}:"
