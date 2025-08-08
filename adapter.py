@@ -1,6 +1,6 @@
 import os
 import pynetbox
-from flask import Flask, Response
+from flask import Flask, Response, request
 
 app = Flask(__name__)
 
@@ -12,7 +12,6 @@ if not NETBOX_URL or not NETBOX_TOKEN:
 
 nb = pynetbox.api(url=NETBOX_URL, token=NETBOX_TOKEN)
 
-# Lógica para certificados SSL autoassinados (mantida por segurança)
 if "https://" in NETBOX_URL:
     import requests
     from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -26,7 +25,7 @@ def get_devices_for_oxidized():
     output_lines = []
     try:
         devices = nb.dcim.devices.filter(status='active')
-
+        
         for device in devices:
             if not all([device.primary_ip4, device.platform, 
                         device.custom_fields.get('oxidized_username'),
@@ -34,15 +33,19 @@ def get_devices_for_oxidized():
                         device.custom_fields.get('ssh_port')]):
                 continue
 
+            # --- CORREÇÃO FINAL AQUI ---
+            # Converte o valor da porta para um número inteiro usando int()
+            port = int(device.custom_fields['ssh_port'])
+
             line = (
                 f"{device.primary_ip4.address.split('/')[0]}:"
                 f"{device.platform.slug}:"
                 f"{device.custom_fields['oxidized_username']}:"
                 f"{device.custom_fields['oxidized_password']}:"
-                f"{device.custom_fields['ssh_port']}"
+                f"{port}" # Usa a variável já convertida
             )
             output_lines.append(line)
-
+            
     except pynetbox.RequestError as e:
         print(f"Erro ao conectar com a API do NetBox: {e.request.method} {e.request.url} - {e}")
         return Response("Erro ao buscar dados do NetBox.", status=500)
