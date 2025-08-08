@@ -1,6 +1,6 @@
 import os
 import pynetbox
-from flask import Flask, Response
+from flask import Flask, Response, request # <--- MUDANÇA: Adicionado 'request'
 
 # Inicializa a aplicação web
 app = Flask(__name__)
@@ -8,6 +8,7 @@ app = Flask(__name__)
 # Lê as variáveis de ambiente para segurança
 NETBOX_URL = os.environ.get('NETBOX_URL')
 NETBOX_TOKEN = os.environ.get('NETBOX_TOKEN')
+ALLOWED_IP = os.environ.get('ALLOWED_IP') # <--- MUDANÇA: Nova variável para o IP do Oxidized
 
 # Validação inicial
 if not NETBOX_URL or not NETBOX_TOKEN:
@@ -16,9 +17,9 @@ if not NETBOX_URL or not NETBOX_TOKEN:
 # Conecta-se à API do NetBox
 nb = pynetbox.api(url=NETBOX_URL, token=NETBOX_TOKEN)
 
-# Desativa a verificação de SSL se a URL não for HTTPS (para ambientes de teste)
-# Em produção, com o certificado que instalamos, isso não será um problema.
-if "https://"" not in NETBOX_URL:
+# --- CORREÇÃO DO BUG DE SINTAXE ABAIXO ---
+# O erro de aspas duplas extras foi corrigido.
+if "https://" not in NETBOX_URL:
     import requests
     from requests.packages.urllib3.exceptions import InsecureRequestWarning
     requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
@@ -29,6 +30,12 @@ if "https://"" not in NETBOX_URL:
 # Cria a rota/página que o Oxidized irá acessar
 @app.route('/devices.csv')
 def get_devices_for_oxidized():
+    # --- MUDANÇA: VERIFICAÇÃO DE SEGURANÇA POR IP ---
+    # Se a variável ALLOWED_IP foi definida, só permite o acesso daquele IP.
+    if ALLOWED_IP and request.remote_addr != ALLOWED_IP:
+        print(f"Acesso negado para o IP: {request.remote_addr}. IP permitido: {ALLOWED_IP}")
+        return Response("Acesso Proibido", status=403)
+
     output_lines = []
     try:
         # Busca todos os dispositivos com status 'active'
@@ -53,7 +60,7 @@ def get_devices_for_oxidized():
             output_lines.append(line)
             
     except pynetbox.RequestError as e:
-        print(f"Erro ao conectar com a API do NetBox: {e}")
+        print(f"Erro ao conectar com a API do NetBox: {e.request.method} {e.request.url} - {e}")
         return Response("Erro ao buscar dados do NetBox.", status=500)
 
     # Junta todas as linhas com uma quebra de linha e retorna como texto puro
