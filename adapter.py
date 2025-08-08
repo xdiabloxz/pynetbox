@@ -1,7 +1,7 @@
 import os
 import pynetbox
 from flask import Flask, Response, request
-import ipaddress # Biblioteca nativa do Python para lidar com IPs e redes
+import ipaddress
 
 app = Flask(__name__)
 
@@ -12,7 +12,6 @@ ALLOWED_IPS_STR = os.environ.get('ALLOWED_IPS')
 if not NETBOX_URL or not NETBOX_TOKEN:
     raise ValueError("As variáveis de ambiente NETBOX_URL e NETBOX_TOKEN são obrigatórias.")
 
-# Converte a string de IPs/Redes em uma lista
 ALLOWED_ENTRIES = [entry.strip() for entry in ALLOWED_IPS_STR.split(',')] if ALLOWED_IPS_STR else []
 
 nb = pynetbox.api(url=NETBOX_URL, token=NETBOX_TOKEN)
@@ -25,40 +24,30 @@ if "https://" in NETBOX_URL:
     session.verify = False
     nb.http_session = session
 
-# --- FUNÇÃO DE VERIFICAÇÃO DE IP CORRIGIDA E ROBUSTA ---
 def is_ip_allowed(remote_ip):
     if not ALLOWED_ENTRIES:
-        return True # Se a lista está vazia, permite tudo por padrão
-    
+        return True
     try:
         ip_to_check = ipaddress.ip_address(remote_ip)
-        
         for entry in ALLOWED_ENTRIES:
             try:
-                # Verifica se a entrada é uma rede (contém '/')
                 if "/" in entry:
                     if ip_to_check in ipaddress.ip_network(entry, strict=False):
-                        return True # O IP pertence à rede, acesso permitido
-                # Se não for uma rede, compara como um IP único
+                        return True
                 else:
                     if ip_to_check == ipaddress.ip_address(entry):
-                        return True # O IP é idêntico, acesso permitido
+                        return True
             except ValueError:
-                # Ignora entradas mal formatadas na lista de permissões e continua a verificação
                 print(f"AVISO: Ignorando entrada inválida na lista ALLOWED_IPS: '{entry}'")
                 continue
-                
     except ValueError:
-        # Se o IP do cliente for inválido por algum motivo
         print(f"AVISO: Endereço de IP remoto inválido recebido: '{remote_ip}'")
         return False
-        
-    return False # Se o loop terminar e não houver correspondência, nega o acesso
+    return False
 
 @app.route('/devices.csv')
 def get_devices_for_oxidized():
     client_ip = request.headers.get('X-Forwarded-for', request.remote_addr).split(',')[0].strip()
-
     if not is_ip_allowed(client_ip):
         print(f"ACESSO NEGADO para o IP: {client_ip}. Não está na lista de permissões: {ALLOWED_ENTRIES}")
         return Response(f"Acesso Proibido para o IP {client_ip}", status=403)
@@ -73,8 +62,13 @@ def get_devices_for_oxidized():
                         device.custom_fields.get('ssh_port')]):
                 continue
             port = int(device.custom_fields['ssh_port'])
+            
+            # --- CORREÇÃO FINAL E DEFINITIVA AQUI ---
+            # Usamos .ip para pegar o endereço IP puro, sem a máscara.
+            ip_address = device.primary_ip4.address.ip
+            
             line = (
-                f"{device.primary_ip4.address.split('/')[0]}:"
+                f"{ip_address}:"
                 f"{device.platform.slug}:"
                 f"{device.custom_fields['oxidized_username']}:"
                 f"{device.custom_fields['oxidized_password']}:"
