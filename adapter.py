@@ -6,9 +6,14 @@ app = Flask(__name__)
 
 NETBOX_URL = os.environ.get('NETBOX_URL')
 NETBOX_TOKEN = os.environ.get('NETBOX_TOKEN')
+# Lê a lista de IPs permitidos, que será uma string separada por vírgulas
+ALLOWED_IPS_STR = os.environ.get('ALLOWED_IPS') 
 
 if not NETBOX_URL or not NETBOX_TOKEN:
     raise ValueError("As variáveis de ambiente NETBOX_URL e NETBOX_TOKEN são obrigatórias.")
+
+# Converte a string de IPs em uma lista, se ela existir
+ALLOWED_IPS_LIST = [ip.strip() for ip in ALLOWED_IPS_STR.split(',')] if ALLOWED_IPS_STR else []
 
 nb = pynetbox.api(url=NETBOX_URL, token=NETBOX_TOKEN)
 
@@ -22,6 +27,15 @@ if "https://" in NETBOX_URL:
 
 @app.route('/devices.csv')
 def get_devices_for_oxidized():
+    # --- LÓGICA DE SEGURANÇA: WHITELIST DE IP ---
+    # Pega o IP real do cliente, mesmo atrás de um proxy
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
+
+    # Se a lista de IPs permitidos não estiver vazia, verifica se o cliente está nela
+    if ALLOWED_IPS_LIST and client_ip not in ALLOWED_IPS_LIST:
+        print(f"ACESSO NEGADO para o IP: {client_ip}. IPs permitidos: {ALLOWED_IPS_LIST}")
+        return Response(f"Acesso Proibido para o IP {client_ip}", status=403)
+
     output_lines = []
     try:
         devices = nb.dcim.devices.filter(status='active')
@@ -33,16 +47,13 @@ def get_devices_for_oxidized():
                         device.custom_fields.get('ssh_port')]):
                 continue
 
-            # --- CORREÇÃO FINAL AQUI ---
-            # Converte o valor da porta para um número inteiro usando int()
             port = int(device.custom_fields['ssh_port'])
-
             line = (
                 f"{device.primary_ip4.address.split('/')[0]}:"
                 f"{device.platform.slug}:"
                 f"{device.custom_fields['oxidized_username']}:"
                 f"{device.custom_fields['oxidized_password']}:"
-                f"{port}" # Usa a variável já convertida
+                f"{port}"
             )
             output_lines.append(line)
             
