@@ -25,28 +25,42 @@ if "https://" in NETBOX_URL:
     session.verify = False
     nb.http_session = session
 
+# --- FUNÇÃO DE VERIFICAÇÃO DE IP CORRIGIDA E ROBUSTA ---
 def is_ip_allowed(remote_ip):
     if not ALLOWED_ENTRIES:
-        return True # Se a lista está vazia, permite tudo
+        return True # Se a lista está vazia, permite tudo por padrão
     
-    ip_to_check = ipaddress.ip_address(remote_ip)
-    
-    for entry in ALLOWED_ENTRIES:
-        if "/" in entry: # Trata como uma rede CIDR
-            if ip_to_check in ipaddress.ip_network(entry, strict=False):
-                return True
-        else: # Trata como um IP único
-            if ip_to_check == ipaddress.ip_address(entry):
-                return True
+    try:
+        ip_to_check = ipaddress.ip_address(remote_ip)
+        
+        for entry in ALLOWED_ENTRIES:
+            try:
+                # Verifica se a entrada é uma rede (contém '/')
+                if "/" in entry:
+                    if ip_to_check in ipaddress.ip_network(entry, strict=False):
+                        return True # O IP pertence à rede, acesso permitido
+                # Se não for uma rede, compara como um IP único
+                else:
+                    if ip_to_check == ipaddress.ip_address(entry):
+                        return True # O IP é idêntico, acesso permitido
+            except ValueError:
+                # Ignora entradas mal formatadas na lista de permissões e continua a verificação
+                print(f"AVISO: Ignorando entrada inválida na lista ALLOWED_IPS: '{entry}'")
+                continue
                 
-    return False
+    except ValueError:
+        # Se o IP do cliente for inválido por algum motivo
+        print(f"AVISO: Endereço de IP remoto inválido recebido: '{remote_ip}'")
+        return False
+        
+    return False # Se o loop terminar e não houver correspondência, nega o acesso
 
 @app.route('/devices.csv')
 def get_devices_for_oxidized():
-    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr).split(',')[0].strip()
+    client_ip = request.headers.get('X-Forwarded-for', request.remote_addr).split(',')[0].strip()
 
     if not is_ip_allowed(client_ip):
-        print(f"ACESSO NEGADO para o IP: {client_ip}. Não está na lista de permissões.")
+        print(f"ACESSO NEGADO para o IP: {client_ip}. Não está na lista de permissões: {ALLOWED_ENTRIES}")
         return Response(f"Acesso Proibido para o IP {client_ip}", status=403)
 
     output_lines = []
