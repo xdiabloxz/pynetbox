@@ -50,7 +50,7 @@ def run_sync():
         log(f"ERRO: Falha ao conectar com o PostgreSQL: {e}")
         return
 
-    # 3. Criar/Ajustar a tabela para incluir as colunas 'enable' e 'input'
+    # 3. Criar/Ajustar a tabela para incluir a coluna 'input'
     cur.execute("""
         CREATE TABLE IF NOT EXISTS devices (
             id SERIAL PRIMARY KEY,
@@ -60,10 +60,8 @@ def run_sync():
             port INTEGER NOT NULL,
             username TEXT NOT NULL,
             password TEXT NOT NULL,
-            enable TEXT,
             input TEXT
         );
-        ALTER TABLE devices ADD COLUMN IF NOT EXISTS enable TEXT;
         ALTER TABLE devices ADD COLUMN IF NOT EXISTS input TEXT;
     """)
 
@@ -78,8 +76,7 @@ def run_sync():
                 continue
 
             ip_address = device.primary_ip4.address.split('/')[0]
-            # Lê os campos opcionais. Se não existirem, o valor será None (nulo)
-            enable_password = device.custom_fields.get('enable_password')
+            # --- Adicionado para buscar o método de acesso (telnet/ssh) ---
             input_method = device.custom_fields.get('oxidized_input')
             
             device_list_to_insert.append((
@@ -89,14 +86,14 @@ def run_sync():
                 int(device.custom_fields['ssh_port']),
                 device.custom_fields['oxidized_username'],
                 device.custom_fields['oxidized_password'],
-                enable_password,
-                input_method # Adiciona o novo campo
+                input_method # <-- Nova informação adicionada
             ))
 
         cur.execute("TRUNCATE TABLE devices RESTART IDENTITY;")
         log(f"Tabela 'devices' limpa. Inserindo {len(device_list_to_insert)} novos registros...")
         
-        insert_query = "INSERT INTO devices (name, ip, model, port, username, password, enable, input) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+        # --- Query de inserção atualizada ---
+        insert_query = "INSERT INTO devices (name, ip, model, port, username, password, input) VALUES (%s, %s, %s, %s, %s, %s, %s)"
         cur.executemany(insert_query, device_list_to_insert)
 
         conn.commit()
