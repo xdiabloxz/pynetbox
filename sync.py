@@ -22,7 +22,7 @@ def log(message):
 def run_sync():
     log("INICIANDO ciclo de sincronização...")
     
-    # 1. Conectar ao NetBox
+    # ... (Conexão com NetBox é igual) ...
     try:
         nb = pynetbox.api(url=NETBOX_URL, token=NETBOX_TOKEN)
         if "https://" in NETBOX_URL:
@@ -30,7 +30,6 @@ def run_sync():
             session = requests.Session()
             session.verify = False
             nb.http_session = session
-        
         devices_from_netbox = nb.dcim.devices.filter(status='active')
         log(f"Encontrados {len(devices_from_netbox)} dispositivos ativos no NetBox.")
     except Exception as e:
@@ -39,32 +38,29 @@ def run_sync():
 
     # 2. Conectar ao PostgreSQL
     try:
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASS
-        )
+        conn = psycopg2.connect(host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
         cur = conn.cursor()
     except Exception as e:
         log(f"ERRO: Falha ao conectar com o PostgreSQL: {e}")
         return
 
-    # 3. Criar/Ajustar a tabela (agora sem a coluna 'enable')
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS devices (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            ip TEXT NOT NULL UNIQUE,
-            model TEXT NOT NULL,
-            port INTEGER NOT NULL,
-            username TEXT NOT NULL,
-            password TEXT NOT NULL,
-            input TEXT
-        );
-        -- Opcional: Remover a coluna 'enable' se ela já existir
-        ALTER TABLE devices DROP COLUMN IF EXISTS enable;
-    """)
+    # 3. Criar/Ajustar a tabela
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS devices (
+                id SERIAL PRIMARY KEY, name TEXT NOT NULL, ip TEXT NOT NULL UNIQUE,
+                model TEXT NOT NULL, port INTEGER NOT NULL, username TEXT NOT NULL,
+                password TEXT NOT NULL, input TEXT
+            );
+        """)
+        cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS input TEXT;")
+        # --- CORREÇÃO AQUI: Garante que a criação/alteração da coluna seja salva imediatamente ---
+        conn.commit()
+    except Exception as e:
+        log(f"ERRO: Falha ao preparar a tabela no banco de dados: {e}")
+        cur.close()
+        conn.close()
+        return
 
     # 4. Sincronizar dados
     try:
@@ -80,9 +76,7 @@ def run_sync():
             input_method = device.custom_fields.get('oxidized_input')
             
             device_list_to_insert.append((
-                device.name,
-                ip_address,
-                device.platform.slug,
+                device.name, ip_address, device.platform.slug,
                 int(device.custom_fields['ssh_port']),
                 device.custom_fields['oxidized_username'],
                 device.custom_fields['oxidized_password'],
@@ -105,12 +99,11 @@ def run_sync():
         cur.close()
         conn.close()
 
-# --- Loop Principal ---
+# ... (Loop Principal é igual) ...
 if __name__ == '__main__':
     log(f"Serviço de Sincronização iniciado. O trabalho será executado a cada {SYNC_INTERVAL} minuto(s).")
     run_sync()
     schedule.every(SYNC_INTERVAL).minutes.do(run_sync)
-    
     while True:
         schedule.run_pending()
         time.sleep(1)
