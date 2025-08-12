@@ -12,7 +12,6 @@ DB_HOST = os.environ.get('DB_HOST')
 DB_NAME = os.environ.get('DB_NAME')
 DB_USER = os.environ.get('DB_USER')
 DB_PASS = os.environ.get('DB_PASS')
-# Nova variável de ambiente para o intervalo, com um padrão de 5 minutos
 SYNC_INTERVAL = int(os.environ.get('SYNC_INTERVAL', 5))
 
 # --- Função de Log com Data/Hora ---
@@ -51,7 +50,7 @@ def run_sync():
         log(f"ERRO: Falha ao conectar com o PostgreSQL: {e}")
         return
 
-    # 3. Criar a tabela se ela não existir
+    # 3. Criar/Ajustar a tabela para incluir as colunas 'enable' e 'input'
     cur.execute("""
         CREATE TABLE IF NOT EXISTS devices (
             id SERIAL PRIMARY KEY,
@@ -60,8 +59,12 @@ def run_sync():
             model TEXT NOT NULL,
             port INTEGER NOT NULL,
             username TEXT NOT NULL,
-            password TEXT NOT NULL
+            password TEXT NOT NULL,
+            enable TEXT,
+            input TEXT
         );
+        ALTER TABLE devices ADD COLUMN IF NOT EXISTS enable TEXT;
+        ALTER TABLE devices ADD COLUMN IF NOT EXISTS input TEXT;
     """)
 
     # 4. Sincronizar dados
@@ -75,6 +78,9 @@ def run_sync():
                 continue
 
             ip_address = device.primary_ip4.address.split('/')[0]
+            # Lê os campos opcionais. Se não existirem, o valor será None (nulo)
+            enable_password = device.custom_fields.get('enable_password')
+            input_method = device.custom_fields.get('oxidized_input')
             
             device_list_to_insert.append((
                 device.name,
@@ -82,13 +88,15 @@ def run_sync():
                 device.platform.slug,
                 int(device.custom_fields['ssh_port']),
                 device.custom_fields['oxidized_username'],
-                device.custom_fields['oxidized_password']
+                device.custom_fields['oxidized_password'],
+                enable_password,
+                input_method # Adiciona o novo campo
             ))
 
         cur.execute("TRUNCATE TABLE devices RESTART IDENTITY;")
         log(f"Tabela 'devices' limpa. Inserindo {len(device_list_to_insert)} novos registros...")
         
-        insert_query = "INSERT INTO devices (name, ip, model, port, username, password) VALUES (%s, %s, %s, %s, %s, %s)"
+        insert_query = "INSERT INTO devices (name, ip, model, port, username, password, enable, input) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
         cur.executemany(insert_query, device_list_to_insert)
 
         conn.commit()
@@ -104,7 +112,7 @@ def run_sync():
 # --- Loop Principal ---
 if __name__ == '__main__':
     log(f"Serviço de Sincronização iniciado. O trabalho será executado a cada {SYNC_INTERVAL} minuto(s).")
-    run_sync() # Executa uma vez imediatamente
+    run_sync()
     schedule.every(SYNC_INTERVAL).minutes.do(run_sync)
     
     while True:
