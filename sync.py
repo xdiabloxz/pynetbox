@@ -50,7 +50,7 @@ def run_sync():
         log(f"ERRO: Falha ao conectar com o PostgreSQL: {e}")
         return
 
-    # 3. Criar/Ajustar a tabela para incluir a coluna 'input'
+    # 3. Criar/Ajustar a tabela (agora sem a coluna 'input')
     cur.execute("""
         CREATE TABLE IF NOT EXISTS devices (
             id SERIAL PRIMARY KEY,
@@ -60,9 +60,10 @@ def run_sync():
             port INTEGER NOT NULL,
             username TEXT NOT NULL,
             password TEXT NOT NULL,
-            input TEXT
+            enable TEXT
         );
-        ALTER TABLE devices ADD COLUMN IF NOT EXISTS input TEXT;
+        -- Opcional: Remover a coluna 'input' se ela já existir
+        ALTER TABLE devices DROP COLUMN IF EXISTS input;
     """)
 
     # 4. Sincronizar dados
@@ -76,8 +77,7 @@ def run_sync():
                 continue
 
             ip_address = device.primary_ip4.address.split('/')[0]
-            # --- Adicionado para buscar o método de acesso (telnet/ssh) ---
-            input_method = device.custom_fields.get('oxidized_input')
+            enable_password = device.custom_fields.get('enable_password')
             
             device_list_to_insert.append((
                 device.name,
@@ -86,14 +86,13 @@ def run_sync():
                 int(device.custom_fields['ssh_port']),
                 device.custom_fields['oxidized_username'],
                 device.custom_fields['oxidized_password'],
-                input_method # <-- Nova informação adicionada
+                enable_password
             ))
 
         cur.execute("TRUNCATE TABLE devices RESTART IDENTITY;")
         log(f"Tabela 'devices' limpa. Inserindo {len(device_list_to_insert)} novos registros...")
         
-        # --- Query de inserção atualizada ---
-        insert_query = "INSERT INTO devices (name, ip, model, port, username, password, input) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+        insert_query = "INSERT INTO devices (name, ip, model, port, username, password, enable) VALUES (%s, %s, %s, %s, %s, %s, %s)"
         cur.executemany(insert_query, device_list_to_insert)
 
         conn.commit()
