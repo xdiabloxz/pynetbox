@@ -107,7 +107,9 @@ def run_sync():
             
             cur.execute("TRUNCATE TABLE devices RESTART IDENTITY;")
             insert_query = "INSERT INTO devices (name, ip, model, port, username, password, enable, input, device_group) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
-            cur.executemany(devices_to_insert)
+            # --- CORREÇÃO FINAL AQUI ---
+            # Adiciona a variável 'insert_query' que estava faltando na chamada da função
+            cur.executemany(insert_query, devices_to_insert)
             conn.commit()
             
             log(f"Sincronização CONCLUÍDA. {len(devices_to_insert)} registros inseridos.")
