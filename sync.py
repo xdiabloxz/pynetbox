@@ -42,14 +42,15 @@ def run_sync():
         log(f"ERRO: Falha ao conectar com o PostgreSQL: {e}")
         return
 
-    # 3. Criar/Ajustar a tabela para incluir a coluna 'enable'
+    # 3. Garante que a tabela tem as colunas 'enable' e 'input'
     cur.execute("""
         CREATE TABLE IF NOT EXISTS devices (
             id SERIAL PRIMARY KEY, name TEXT NOT NULL, ip TEXT NOT NULL UNIQUE,
             model TEXT NOT NULL, port INTEGER NOT NULL, username TEXT NOT NULL,
-            password TEXT NOT NULL, enable TEXT
+            password TEXT NOT NULL, enable TEXT, input TEXT
         );
         ALTER TABLE devices ADD COLUMN IF NOT EXISTS enable TEXT;
+        ALTER TABLE devices ADD COLUMN IF NOT EXISTS input TEXT;
     """)
     conn.commit()
 
@@ -65,30 +66,32 @@ def run_sync():
 
             ip_address = device.primary_ip4.address.split('/')[0]
             
-            # --- Lógica para a senha de 'enable' ---
-            enable_value = None # Padrão
+            # --- Lógica para buscar os campos 'enable' e 'input' ---
             use_enable = device.custom_fields.get('oxidized_use_enable', False)
+            enable_value = None
             if use_enable:
-                # Se a caixa estiver marcada, verifica se há uma senha.
-                # Se não houver senha, define o valor como 'true'
                 enable_value = device.custom_fields.get('enable_password') or 'true'
 
+            input_method = device.custom_fields.get('oxidized_input')
+            
             device_list_to_insert.append((
                 device.name, ip_address, device.platform.slug,
                 int(device.custom_fields['ssh_port']),
                 device.custom_fields['oxidized_username'],
                 device.custom_fields['oxidized_password'],
-                enable_value
+                enable_value,
+                input_method
             ))
 
         cur.execute("TRUNCATE TABLE devices RESTART IDENTITY;")
         log(f"Tabela 'devices' limpa. Inserindo {len(device_list_to_insert)} novos registros...")
         
-        insert_query = "INSERT INTO devices (name, ip, model, port, username, password, enable) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+        insert_query = "INSERT INTO devices (name, ip, model, port, username, password, enable, input) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
         cur.executemany(insert_query, device_list_to_insert)
 
         conn.commit()
         log("Sincronização CONCLUÍDA com sucesso!")
+
     except Exception as e:
         log(f"ERRO: Falha durante a sincronização: {e}")
         conn.rollback()
