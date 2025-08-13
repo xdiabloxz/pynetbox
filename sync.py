@@ -22,7 +22,7 @@ def log(message):
 def run_sync():
     log("INICIANDO ciclo de sincronização...")
     
-    # ... (Conexão com NetBox é igual) ...
+    # ... (Conexão com NetBox e DB é igual) ...
     try:
         nb = pynetbox.api(url=NETBOX_URL, token=NETBOX_TOKEN)
         if "https://" in NETBOX_URL:
@@ -35,8 +35,6 @@ def run_sync():
     except Exception as e:
         log(f"ERRO: Falha ao conectar ou buscar dados do NetBox: {e}")
         return
-
-    # 2. Conectar ao PostgreSQL
     try:
         conn = psycopg2.connect(host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
         cur = conn.cursor()
@@ -44,23 +42,16 @@ def run_sync():
         log(f"ERRO: Falha ao conectar com o PostgreSQL: {e}")
         return
 
-    # 3. Criar/Ajustar a tabela
-    try:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS devices (
-                id SERIAL PRIMARY KEY, name TEXT NOT NULL, ip TEXT NOT NULL UNIQUE,
-                model TEXT NOT NULL, port INTEGER NOT NULL, username TEXT NOT NULL,
-                password TEXT NOT NULL, input TEXT
-            );
-        """)
-        cur.execute("ALTER TABLE devices ADD COLUMN IF NOT EXISTS input TEXT;")
-        # --- CORREÇÃO AQUI: Garante que a criação/alteração da coluna seja salva imediatamente ---
-        conn.commit()
-    except Exception as e:
-        log(f"ERRO: Falha ao preparar a tabela no banco de dados: {e}")
-        cur.close()
-        conn.close()
-        return
+    # 3. Criar/Ajustar a tabela para incluir a coluna 'enable'
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS devices (
+            id SERIAL PRIMARY KEY, name TEXT NOT NULL, ip TEXT NOT NULL UNIQUE,
+            model TEXT NOT NULL, port INTEGER NOT NULL, username TEXT NOT NULL,
+            password TEXT NOT NULL, enable TEXT
+        );
+        ALTER TABLE devices ADD COLUMN IF NOT EXISTS enable TEXT;
+    """)
+    conn.commit()
 
     # 4. Sincronizar dados
     try:
@@ -73,25 +64,31 @@ def run_sync():
                 continue
 
             ip_address = device.primary_ip4.address.split('/')[0]
-            input_method = device.custom_fields.get('oxidized_input')
             
+            # --- Lógica para a senha de 'enable' ---
+            enable_value = None # Padrão
+            use_enable = device.custom_fields.get('oxidized_use_enable', False)
+            if use_enable:
+                # Se a caixa estiver marcada, verifica se há uma senha.
+                # Se não houver senha, define o valor como 'true'
+                enable_value = device.custom_fields.get('enable_password') or 'true'
+
             device_list_to_insert.append((
                 device.name, ip_address, device.platform.slug,
                 int(device.custom_fields['ssh_port']),
                 device.custom_fields['oxidized_username'],
                 device.custom_fields['oxidized_password'],
-                input_method
+                enable_value
             ))
 
         cur.execute("TRUNCATE TABLE devices RESTART IDENTITY;")
         log(f"Tabela 'devices' limpa. Inserindo {len(device_list_to_insert)} novos registros...")
         
-        insert_query = "INSERT INTO devices (name, ip, model, port, username, password, input) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+        insert_query = "INSERT INTO devices (name, ip, model, port, username, password, enable) VALUES (%s, %s, %s, %s, %s, %s, %s)"
         cur.executemany(insert_query, device_list_to_insert)
 
         conn.commit()
         log("Sincronização CONCLUÍDA com sucesso!")
-
     except Exception as e:
         log(f"ERRO: Falha durante a sincronização: {e}")
         conn.rollback()
@@ -99,7 +96,7 @@ def run_sync():
         cur.close()
         conn.close()
 
-# ... (Loop Principal é igual) ...
+# --- Loop Principal ---
 if __name__ == '__main__':
     log(f"Serviço de Sincronização iniciado. O trabalho será executado a cada {SYNC_INTERVAL} minuto(s).")
     run_sync()
