@@ -26,7 +26,7 @@ def trigger_oxidized_reload():
         return
     reload_url = f"{OXIDIZED_URL}/reload"
     try:
-        log("Sinal de recarga enviado ao Oxidized...")
+        log("Acionando a recarga dos nós no Oxidized...")
         response = requests.get(reload_url, timeout=10)
         if response.status_code == 200:
             log("Sinal de recarga processado pelo Oxidized com sucesso.")
@@ -74,7 +74,10 @@ def run_sync():
         devices_to_insert = []
         ips_from_netbox = set()
         for device in devices_from_netbox:
-            # --- CORREÇÃO DO BUG DE SINTAXE AQUI ---
+            
+            # --- LINHA DE DEBUG ADICIONADA AQUI ---
+            log(f"DEBUG para o dispositivo '{device.name}': Valor de device.role = {device.role}")
+
             if not all([device.primary_ip4, device.platform, 
                         device.custom_fields.get('oxidized_username'),
                         device.custom_fields.get('oxidized_password'),
