@@ -39,22 +39,12 @@ def run_sync():
     log("INICIANDO ciclo de sincronização...")
     
     try:
-        nb = pynetbox.api(url=NETBOX_URL, token=NETBOX_TOKEN)
-        if "https://" in NETBOX_URL:
-            session = requests.Session()
-            session.verify = False
-            nb.http_session = session
-        devices_from_netbox = nb.dcim.devices.filter(status='active')
-        log(f"Encontrados {len(devices_from_netbox)} dispositivos ativos no NetBox.")
-    except Exception as e:
-        log(f"ERRO: Falha ao conectar ou buscar dados do NetBox: {e}"); return
-
-    try:
         conn = psycopg2.connect(host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
         cur = conn.cursor()
     except Exception as e:
         log(f"ERRO: Falha ao conectar com o PostgreSQL: {e}"); return
 
+    # Garante que a tabela tem todas as colunas necessárias
     cur.execute("""
         CREATE TABLE IF NOT EXISTS devices (
             id SERIAL PRIMARY KEY, name TEXT NOT NULL, ip TEXT NOT NULL UNIQUE,
@@ -66,18 +56,31 @@ def run_sync():
         ALTER TABLE devices ADD COLUMN IF NOT EXISTS device_group TEXT;
     """)
     conn.commit()
-
+    
+    # --- NOVA LÓGICA: 1. Busca o estado ATUAL do banco de dados ---
+    db_devices_data = {}
     try:
-        cur.execute("SELECT ip FROM devices;")
-        ips_in_db = {row[0] for row in cur.fetchall()}
-        
-        devices_to_insert = []
-        ips_from_netbox = set()
-        for device in devices_from_netbox:
-            
-            # --- LINHA DE DEBUG ADICIONADA AQUI ---
-            log(f"DEBUG para o dispositivo '{device.name}': Valor de device.role = {device.role}")
+        cur.execute("SELECT ip, name, model, port, username, password, enable, input, device_group FROM devices;")
+        for row in cur.fetchall():
+            ip = row[0]
+            # Armazena os dados em um formato consistente para comparação
+            db_devices_data[ip] = (row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8])
+    except Exception as e:
+        log(f"ERRO: Falha ao ler dados existentes do banco: {e}"); cur.close(); conn.close(); return
 
+    # --- NOVA LÓGICA: 2. Busca o estado DESEJADO do NetBox ---
+    try:
+        nb = pynetbox.api(url=NETBOX_URL, token=NETBOX_TOKEN)
+        if "https://" in NETBOX_URL:
+            session = requests.Session()
+            session.verify = False
+            nb.http_session = session
+        devices_from_netbox = nb.dcim.devices.filter(status='active')
+        log(f"Encontrados {len(devices_from_netbox)} dispositivos ativos no NetBox.")
+        
+        netbox_devices_data = {}
+        devices_to_insert = []
+        for device in devices_from_netbox:
             if not all([device.primary_ip4, device.platform, 
                         device.custom_fields.get('oxidized_username'),
                         device.custom_fields.get('oxidized_password'),
@@ -85,13 +88,12 @@ def run_sync():
                 continue
 
             ip_address = device.primary_ip4.address.split('/')[0]
-            ips_from_netbox.add(ip_address)
-            
             use_enable = device.custom_fields.get('oxidized_use_enable', False)
             enable_value = device.custom_fields.get('enable_password') or 'true' if use_enable else None
             input_method = device.custom_fields.get('oxidized_input')
             device_group = device.role.slug if device.role else 'default'
-
+            
+            # Adiciona à lista para inserção no banco
             devices_to_insert.append((
                 device.name, ip_address, device.platform.slug,
                 int(device.custom_fields['ssh_port']),
@@ -99,19 +101,28 @@ def run_sync():
                 device.custom_fields['oxidized_password'],
                 enable_value, input_method, device_group
             ))
+            # Adiciona ao dicionário para comparação
+            netbox_devices_data[ip_address] = (
+                device.name, device.platform.slug,
+                int(device.custom_fields['ssh_port']),
+                device.custom_fields['oxidized_username'],
+                device.custom_fields['oxidized_password'],
+                enable_value, input_method, device_group
+            )
 
-        if ips_in_db != ips_from_netbox:
-            log("Mudança detectada na lista de dispositivos. Atualizando o banco de dados e acionando o reload.")
+        # --- NOVA LÓGICA: 3. Compara o estado ATUAL com o DESEJADO ---
+        if db_devices_data != netbox_devices_data:
+            log("Mudança detectada nos dados dos dispositivos. Sincronizando e acionando reload.")
             
             cur.execute("TRUNCATE TABLE devices RESTART IDENTITY;")
             insert_query = "INSERT INTO devices (name, ip, model, port, username, password, enable, input, device_group) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
-            cur.executemany(insert_query, devices_to_insert)
+            cur.executemany(devices_to_insert)
             conn.commit()
             
             log(f"Sincronização CONCLUÍDA. {len(devices_to_insert)} registros inseridos.")
             trigger_oxidized_reload()
         else:
-            log("Nenhuma mudança encontrada na lista de dispositivos. Nenhuma ação necessária.")
+            log("Nenhuma mudança encontrada. Nenhuma ação necessária.")
 
     except Exception as e:
         log(f"ERRO: Falha durante a sincronização: {e}"); conn.rollback()
