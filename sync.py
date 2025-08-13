@@ -38,7 +38,6 @@ def trigger_oxidized_reload():
 def run_sync():
     log("INICIANDO ciclo de sincronização...")
     
-    # ... (Conexão com NetBox é igual) ...
     try:
         nb = pynetbox.api(url=NETBOX_URL, token=NETBOX_TOKEN)
         if "https://" in NETBOX_URL:
@@ -50,14 +49,12 @@ def run_sync():
     except Exception as e:
         log(f"ERRO: Falha ao conectar ou buscar dados do NetBox: {e}"); return
 
-    # ... (Conexão com PostgreSQL é igual) ...
     try:
         conn = psycopg2.connect(host=DB_HOST, dbname=DB_NAME, user=DB_USER, password=DB_PASS)
         cur = conn.cursor()
     except Exception as e:
         log(f"ERRO: Falha ao conectar com o PostgreSQL: {e}"); return
 
-    # Garante que a tabela tem a nova coluna 'device_group'
     cur.execute("""
         CREATE TABLE IF NOT EXISTS devices (
             id SERIAL PRIMARY KEY, name TEXT NOT NULL, ip TEXT NOT NULL UNIQUE,
@@ -71,15 +68,18 @@ def run_sync():
     conn.commit()
 
     try:
-        # Busca a lista de IPs ATUAL no banco de dados
         cur.execute("SELECT ip FROM devices;")
         ips_in_db = {row[0] for row in cur.fetchall()}
         
-        # Monta a lista de dispositivos do NetBox
         devices_to_insert = []
         ips_from_netbox = set()
         for device in devices_from_netbox:
-            if not all([...]): continue # Mesma verificação de antes
+            # --- CORREÇÃO DO BUG DE SINTAXE AQUI ---
+            if not all([device.primary_ip4, device.platform, 
+                        device.custom_fields.get('oxidized_username'),
+                        device.custom_fields.get('oxidized_password'),
+                        device.custom_fields.get('ssh_port')]):
+                continue
 
             ip_address = device.primary_ip4.address.split('/')[0]
             ips_from_netbox.add(ip_address)
@@ -87,7 +87,6 @@ def run_sync():
             use_enable = device.custom_fields.get('oxidized_use_enable', False)
             enable_value = device.custom_fields.get('enable_password') or 'true' if use_enable else None
             input_method = device.custom_fields.get('oxidized_input')
-            # Busca a função (role) do dispositivo e usa o 'slug' (nome amigável)
             device_group = device.role.slug if device.role else 'default'
 
             devices_to_insert.append((
@@ -98,7 +97,6 @@ def run_sync():
                 enable_value, input_method, device_group
             ))
 
-        # Compara as listas de IPs para ver se houve mudança
         if ips_in_db != ips_from_netbox:
             log("Mudança detectada na lista de dispositivos. Atualizando o banco de dados e acionando o reload.")
             
@@ -108,7 +106,7 @@ def run_sync():
             conn.commit()
             
             log(f"Sincronização CONCLUÍDA. {len(devices_to_insert)} registros inseridos.")
-            trigger_oxidized_reload() # Aciona o reload apenas se houve mudança
+            trigger_oxidized_reload()
         else:
             log("Nenhuma mudança encontrada na lista de dispositivos. Nenhuma ação necessária.")
 
@@ -117,4 +115,10 @@ def run_sync():
     finally:
         cur.close(); conn.close()
 
-# ... (Loop Principal é igual) ...
+if __name__ == '__main__':
+    log(f"Serviço de Sincronização iniciado. O trabalho será executado a cada {SYNC_INTERVAL} minuto(s).")
+    run_sync()
+    schedule.every(SYNC_INTERVAL).minutes.do(run_sync)
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
